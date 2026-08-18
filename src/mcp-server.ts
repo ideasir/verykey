@@ -204,7 +204,7 @@ function createMcp(dbPath: string, rawToken: string): { token: any; handleReques
           result: {
             protocolVersion: '2025-03-26',
             capabilities: { tools: {} },
-            serverInfo: { name: 'verykey', version: '1.0.0' },
+            serverInfo: { name: 'verykey', version: '0.1.0-rc.7' },
           },
         };
         break;
