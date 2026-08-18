@@ -1,6 +1,8 @@
 ﻿node_modules/
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.tar.gz
 *.tar.gz.b64
 *.log
