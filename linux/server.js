@@ -27,6 +27,26 @@ try { V.loadVault(); } catch (e) {
 
 const cfg = loadJson(CFG_FILE, {});
 
+// ─── 主密码（Bitwarden 式解锁，轻量版）───────────
+// 首次设置：/api/setup-pass；之后解锁：/api/unlock（10 分钟自动锁）
+function hashPassword(pw, salt) { return crypto.scryptSync(pw, salt, 32).toString('hex'); }
+let unlockedAt = 0;                       // 内存解锁态
+const UNLOCK_TTL = 10 * 60 * 1000;        // 10 分钟
+function isUnlocked() { return cfg.masterHash && (Date.now() - unlockedAt) < UNLOCK_TTL; }
+function tryUnlock(pw) {
+  if (!cfg.masterHash) return false;
+  const h = hashPassword(pw || '', cfg.masterSalt);
+  if (h === cfg.masterHash) { unlockedAt = Date.now(); return true; }
+  return false;
+}
+function setMasterPassword(pw) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  cfg.masterHash = hashPassword(pw, salt);
+  cfg.masterSalt = salt;
+  saveJson(CFG_FILE, cfg);
+  unlockedAt = Date.now();
+}
+
 // ─── TOTP（复用云桥逻辑）───────────────────────
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 function base32Decode(s) {
@@ -161,90 +181,121 @@ document.getElementById('go').onclick=async()=>{
 </script></body></html>`;
 
 const MAIN_HTML = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VeryKey · 密钥管理</title><style>
+<title>VeryKey · 密钥保险库</title><style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Inter','Noto Sans SC',system-ui,sans-serif;background:#0b0f1a;color:#e8ecf4;min-height:100vh;padding:28px}
-.wrap{max-width:860px;margin:0 auto}
-.head{display:flex;align-items:center;gap:12px;margin-bottom:24px}
-.head .dot{width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,#34d399,#6366f1);box-shadow:0 0 18px rgba(52,211,153,.8)}
-.head h1{font-size:20px;font-weight:700}
-.head .right{margin-left:auto;display:flex;gap:10px;align-items:center}
-.tab{display:flex;gap:8px;margin-bottom:20px}
-.tab button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#c2cadb;padding:8px 18px;border-radius:10px;cursor:pointer;font-size:14px}
-.tab button.on{background:linear-gradient(135deg,rgba(52,211,153,.2),rgba(99,102,241,.2));color:#34d399;border-color:rgba(52,211,153,.4)}
-.panel{display:none}
-.panel.on{display:block}
-.add{background:rgba(20,28,46,.72);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:20px;margin-bottom:20px;display:flex;gap:10px;flex-wrap:wrap;align-items:end}
-.add input{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:10px 12px;color:#e8ecf4;font-size:14px;outline:none}
-.add input:focus{border-color:#34d399}
-.add input.nm{width:200px}.add input.val{flex:1;min-width:220px}.add input.nt{width:160px}
-.btn{border:0;border-radius:10px;padding:10px 18px;font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
-.btn.primary{background:linear-gradient(135deg,#34d399,#0ea5e9);color:#04211a}
-.btn.danger{background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)}
-.btn.ghost{background:rgba(255,255,255,.06);color:#c2cadb;border:1px solid rgba(255,255,255,.1)}
-.btn:hover{filter:brightness(1.1)}
-table{width:100%;border-collapse:collapse;background:rgba(20,28,46,.72);border:1px solid rgba(255,255,255,.08);border-radius:14px;overflow:hidden}
-th{font-size:12px;color:#8b94a7;text-align:left;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.08);font-weight:600}
-td{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.05);font-size:14px;vertical-align:middle}
-tr:last-child td{border-bottom:0}
-.mono{font-family:'JetBrains Mono',monospace;color:#34d399}
-.masked{font-family:'JetBrains Mono',monospace;color:#8b94a7}
-.op{display:flex;gap:8px}
-.op button{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#c2cadb;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer}
-.op button.cp:hover{background:rgba(52,211,153,.15);color:#34d399}
-.op button.del:hover{background:rgba(239,68,68,.15);color:#fca5a5}
-.empty{color:#5b6478;text-align:center;padding:40px;font-size:14px}
-.audit{font-family:'JetBrains Mono',monospace;font-size:12px;color:#8b94a7;line-height:1.9}
-.audit span.a{color:#34d399}.audit span.n{color:#e8ecf4}
-.logout{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:#c2cadb;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer}
-.hint{color:#5b6478;font-size:12px;margin-bottom:16px}
-.hint code{background:rgba(255,255,255,.06);padding:2px 6px;border-radius:5px;color:#34d399}
+body{font-family:'Inter','Noto Sans SC',system-ui,sans-serif;background:#0d1117;color:#e6edf3;min-height:100vh;padding:20px}
+.wrap{max-width:760px;margin:0 auto}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:18px;padding:14px 18px;background:#161b22;border:1px solid #30363d;border-radius:12px}
+.top .dot{width:12px;height:12px;border-radius:50%;background:linear-gradient(135deg,#3fb950,#58a6ff);box-shadow:0 0 14px rgba(63,185,80,.6)}
+.top h1{font-size:17px;font-weight:700}
+.top .sp{flex:1}
+.unlock{display:flex;gap:8px;align-items:center}
+.unlock input{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 12px;color:#e6edf3;font-size:13px;outline:none;width:170px}
+.unlock input:focus{border-color:#3fb950}
+.btn{border:0;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.btn.g{background:#238636;color:#fff}.btn.g:hover{filter:brightness(1.15)}
+.btn.gray{background:#21262d;color:#c9d1d9;border:1px solid #30363d}
+.btn.gray:hover{background:#30363d}
+.btn.d{background:rgba(248,81,73,.12);color:#f85149;border:1px solid rgba(248,81,73,.3)}
+.badge{font-size:11px;padding:4px 10px;border-radius:20px;font-weight:600}
+.badge.lock{background:#21262d;color:#8b949e;border:1px solid #30363d}
+.badge.open{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.35)}
+.add{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:16px;margin-bottom:14px;display:flex;gap:8px;flex-wrap:wrap}
+.add input{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 12px;color:#e6edf3;font-size:13px;outline:none}
+.add input:focus{border-color:#58a6ff}
+.add .nm{width:190px}.add .val{flex:1;min-width:200px}.add .nt{width:150px}
+.search{width:100%;background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:10px 14px;color:#e6edf3;font-size:14px;outline:none;margin-bottom:12px}
+.search:focus{border-color:#58a6ff}
+.item{display:flex;align-items:center;gap:12px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 16px;margin-bottom:8px}
+.item .nm{font-family:'JetBrains Mono',monospace;font-size:14px;color:#58a6ff;min-width:180px;font-weight:600}
+.item .v{font-family:'JetBrains Mono',monospace;font-size:13px;color:#8b949e;flex:1}
+.item .note{color:#6e7681;font-size:12px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .ops{display:flex;gap:6px}
+.item .ops button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer}
+.item .ops button:hover{border-color:#58a6ff;color:#58a6ff}
+.item .ops button.del:hover{border-color:#f85149;color:#f85149}
+.empty{color:#6e7681;text-align:center;padding:36px;font-size:13px}
+.hint{color:#6e7681;font-size:12px;margin-bottom:14px;line-height:1.7}
+.hint code{background:#21262d;padding:2px 7px;border-radius:5px;color:#3fb950}
+.setup{background:#161b22;border:1px solid rgba(88,166,255,.35);border-radius:12px;padding:18px;margin-bottom:14px}
+.setup h3{font-size:14px;margin-bottom:6px;color:#58a6ff}
+.setup p{color:#8b949e;font-size:12px;margin-bottom:12px}
+.setup .row{display:flex;gap:8px}
+.setup input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:9px 12px;color:#e6edf3;font-size:13px;outline:none}
+.copy-ok{color:#3fb950;font-size:11px;margin-left:4px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#238636;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+.toast.show{opacity:1}
 </style></head><body>
 <div class="wrap">
-  <div class="head"><div class="dot"></div><h1>VeryKey · 密钥管理</h1>
-    <div class="right"><button class="logout" onclick="location.href='/api/logout'">退出</button></div></div>
-  <div class="tab">
-    <button id="tKeys" class="on" onclick="sw('keys')">密钥</button>
-    <button id="tAudit" onclick="sw('audit')">审计日志</button>
+  <div class="top">
+    <div class="dot"></div><h1>VeryKey</h1>
+    <div class="sp"></div>
+    <div id="lockArea"></div>
   </div>
-  <div class="panel on" id="pKeys">
-    <div class="add">
-      <input class="nm" id="nm" placeholder="变量名 GITHUB_TOKEN" autocomplete="off">
-      <input class="val" id="val" placeholder="密钥 / 密码值" autocomplete="off" type="password">
-      <input class="nt" id="nt" placeholder="备注(可选)" autocomplete="off">
-      <button class="btn primary" onclick="addKey()">保存</button>
-    </div>
-    <div class="hint">智能体调用：<code>verykey run 变量名 -- 命令</code> · 值不进对话，显示脱敏</div>
-    <div id="tbl"></div>
+  <div id="setupArea"></div>
+  <div class="hint">智能体调用：<code>verykey run 变量名 -- 命令</code> · 明文需主密码解锁后复制</div>
+  <div class="add">
+    <input class="nm" id="nm" placeholder="变量名 e.g. GITHUB_TOKEN" autocomplete="off" spellcheck="false">
+    <input class="val" id="val" placeholder="密钥 / 密码值" autocomplete="off" type="password">
+    <button class="btn gray" onclick="gen()" title="生成随机值">🎲</button>
+    <input class="nt" id="nt" placeholder="备注" autocomplete="off">
+    <button class="btn g" onclick="addKey()">保存</button>
   </div>
-  <div class="panel" id="pAudit"><div id="aud"></div></div>
+  <input class="search" id="q" placeholder="搜索变量名…" oninput="render()">
+  <div id="list"></div>
 </div>
+<div class="toast" id="toast"></div>
 <script>
 async function j(p,opt){const r=await fetch(p,opt);if(r.status===401){location.href='/login';throw 0}return r.json()}
-function sw(t){document.querySelectorAll('.tab button').forEach(b=>b.classList.remove('on'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('on'));
-document.getElementById(t==='keys'?'tKeys':'tAudit').classList.add('on');document.getElementById(t==='keys'?'pKeys':'pAudit').classList.add('on');
-if(t==='audit')loadAudit();else loadKeys()}
-async function loadKeys(){
-  const d=await j('/api/keys');
-  const el=document.getElementById('tbl');
-  if(!d.items.length){el.innerHTML='<div class="empty">还没有密钥 — 在上方输入变量名和值添加</div>';return}
-  el.innerHTML='<table><tr><th>变量名</th><th>值(脱敏)</th><th>备注</th><th>更新时间</th><th></th></tr>'+
-  d.items.map(k=>'<tr><td class="mono">'+k.name+'</td><td class="masked">'+k.masked+'</td><td>'+esc(k.note)+'</td><td style="color:#5b6478;font-size:12px">'+(k.updatedAt||'').slice(0,19)+'</td>'+
-  '<td><div class="op"><button class="cp" onclick="copyName(\''+k.name+'\')">复制变量名</button><button class="del" onclick="delKey(\''+k.name+'\')">删除</button></div></td></tr>').join('')+'</table>';
-}
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;')}
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),1600)}
+async function copy(t){try{await navigator.clipboard.writeText(t);toast('已复制')}catch(e){toast('复制失败')}}
+function gen(){const a='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',b=crypto.getRandomValues(new Uint8Array(32));let s='';for(const x of b)s+=a[x%a.length];document.getElementById('val').value=s}
+let keys=[],q='';
+async function loadKeys(){const d=await j('/api/keys');keys=d.items;render()}
+function render(){
+  q=document.getElementById('q').value.toLowerCase();
+  const el=document.getElementById('list');
+  const list=keys.filter(k=>k.name.toLowerCase().includes(q)||(k.note||'').toLowerCase().includes(q));
+  if(!list.length){el.innerHTML='<div class="empty">'+ (keys.length?'没有匹配的密钥':'还没有密钥 — 在顶部输入变量名和值，点「保存」') +'</div>';return}
+  el.innerHTML=list.map(k=>
+    '<div class="item"><div class="nm">'+esc(k.name)+'</div><div class="v">'+esc(k.masked)+'</div><div class="note">'+esc(k.note)+'</div>'+
+    '<div class="ops"><button onclick="copy(\''+k.name+'\')" title="复制变量名">名</button>'+
+    '<button class="reveal" id="rv_'+k.name+'" onclick="copyValue(\''+k.name+'\')" title="复制明文（需解锁）">钥</button>'+
+    '<button class="del" onclick="delKey(\''+k.name+'\')">✕</button></div></div>').join('');
+  paintLock();
+}
+async function copyValue(n){const r=await j('/api/keys/'+encodeURIComponent(n)+'/plain');if(r.ok&&r.value){copy(r.value)}else{alert(r.error||'需要先解锁')}}
+async function delKey(n){if(!confirm('删除 '+n+'？'))return;const r=await j('/api/keys/'+encodeURIComponent(n),{method:'DELETE'});if(r.success){toast('已删除');loadKeys()}}
 async function addKey(){
   const nm=document.getElementById('nm').value.trim(),val=document.getElementById('val').value,nt=document.getElementById('nt').value.trim();
-  if(!nm||!val)return alert('变量名和值必填');
+  if(!nm||!val)return toast('变量名和值必填');
   const r=await j('/api/keys',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nm,value:val,note:nt})});
-  if(r.success){document.getElementById('nm').value='';document.getElementById('val').value='';document.getElementById('nt').value='';loadKeys()}
+  if(r.success){document.getElementById('nm').value='';document.getElementById('val').value='';document.getElementById('nt').value='';toast('已保存');loadKeys()}
   else alert(r.error||'保存失败');
 }
-async function delKey(n){if(!confirm('删除 '+n+'？'))return;const r=await j('/api/keys/'+encodeURIComponent(n),{method:'DELETE'});if(r.success)loadKeys()}
-function copyName(n){navigator.clipboard.writeText(n).then(()=>{})}
-async function loadAudit(){const d=await j('/api/audit');const el=document.getElementById('aud');
-if(!d.items.length){el.innerHTML='<div class="empty">暂无记录</div>';return}
-el.innerHTML='<div class="audit">'+d.items.map(l=>'<div>'+esc(l)+'</div>').join('')+'</div>'}
+async function paintLock(){
+  const st=await j('/api/state').catch(()=>({unlocked:false,hasMaster:false}));
+  const la=document.getElementById('lockArea');
+  if(!st.hasMaster){
+    const sa=document.getElementById('setupArea');
+    sa.innerHTML='<div class="setup"><h3>设置主密码</h3><p>主密码用于解锁查看明文（10 分钟自动锁定）。与 TOTP 登录相互独立，请牢记。</p>'+
+    '<div class="row"><input id="sp1" type="password" placeholder="设置主密码"><input id="sp2" type="password" placeholder="确认主密码"><button class="btn g" onclick="setupPass()">设置</button></div></div>';
+    la.innerHTML='<span class="badge lock">🔒 未设置主密码</span>';return;
+  }
+  document.getElementById('setupArea').innerHTML='';
+  if(st.unlocked){
+    la.innerHTML='<span class="badge open">🔓 已解锁</span> <button class="btn gray" onclick="lock()">锁定</button>';
+  }else{
+    la.innerHTML='<div class="unlock"><input id="pw" type="password" placeholder="主密码" onkeydown="if(event.key===\'Enter\')unlock()"><button class="btn g" onclick="unlock()">解锁</button></div>';
+  }
+}
+let uiTimer=null;
+async function refresh(){await paintLock();const st=await j('/api/state');if(!st.unlocked){document.querySelectorAll('.reveal').forEach(b=>b.style.opacity='.35')}}
+async function unlock(){const pw=document.getElementById('pw').value;const r=await j('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw})});if(r.success){toast('已解锁');paintLock()}else{alert('主密码错误')}}
+async function lock(){await j('/api/lock',{method:'POST'});paintLock()}
+async function setupPass(){const a=document.getElementById('sp1').value,b=document.getElementById('sp2').value;if(!a||a.length<4)return alert('主密码至少 4 位');if(a!==b)return alert('两次输入不一致');const r=await j('/api/setup-pass',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:a})});if(r.success){toast('主密码已设置');refresh()}else alert(r.error||'设置失败')}
+setInterval(refresh,30000);
 loadKeys();
 </script></body></html>`;
 
@@ -290,6 +341,27 @@ const server = http.createServer(async (req, res) => {
 
   if (!authed(req)) return send(401, { error: '未认证' });
 
+  if (url === '/api/state') {
+    return send(200, { unlocked: isUnlocked(), hasMaster: !!cfg.masterHash });
+  }
+  if (url === '/api/setup-pass') {
+    const b = await body();
+    if (cfg.masterHash) return send(200, { success: false, error: '主密码已设置' });
+    if (!b.password || String(b.password).length < 4) return send(200, { success: false, error: '主密码至少 4 位' });
+    setMasterPassword(String(b.password));
+    V.audit('setup-master-pass', '-', 'webui');
+    return send(200, { success: true });
+  }
+  if (url === '/api/unlock') {
+    const b = await body();
+    if (tryUnlock(b.password)) { V.audit('unlock', '-', 'webui'); return send(200, { success: true }); }
+    V.audit('unlock-fail', '-', 'webui');
+    return send(200, { success: false, error: '主密码错误' });
+  }
+  if (url === '/api/lock') {
+    unlockedAt = 0;
+    return send(200, { success: true });
+  }
   if (url === '/api/keys' && req.method === 'GET') {
     const vault = V.loadVault();
     const items = Object.keys(vault).sort().map(n => ({ name: n, masked: V.mask(vault[n].value), note: vault[n].note || '', createdAt: vault[n].createdAt, updatedAt: vault[n].updatedAt }));
@@ -305,6 +377,15 @@ const server = http.createServer(async (req, res) => {
     V.saveVault(vault);
     V.audit('add/update', name, 'webui');
     return send(200, { success: true });
+  }
+  const mp = url.match(/^\/api\/keys\/([^/]+)\/plain$/);
+  if (mp) {
+    const name = decodeURIComponent(mp[1]);
+    if (!isUnlocked()) return send(200, { ok: false, error: '需要主密码解锁' });
+    const vault = V.loadVault();
+    if (!vault[name]) return send(200, { ok: false, error: '未找到' });
+    V.audit('reveal', name, 'webui');
+    return send(200, { ok: true, value: vault[name].value });
   }
   const m = url.match(/^\/api\/keys\/([^/]+)$/);
   if (m && req.method === 'DELETE') {
