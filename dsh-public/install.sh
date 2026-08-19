@@ -1,6 +1,5 @@
 #!/bin/bash
-# dsh-public 一键安装（root）：装 cloudflared + 放置插件文件
-set -e
+# dsh-public 一键安装（root）：支持 本地文件(同目录) 或 在线(管道 wget|bash) 两种方式
 echo "════════════════════════════════════"
 echo "  dsh-public — DSH 公网访问插件 安装"
 echo "════════════════════════════════════"
@@ -13,12 +12,34 @@ if ! command -v node >/dev/null 2>&1; then
   echo "✗ 未找到 Node.js（dsh 需要 Node 20+）"; exit 1
 fi
 
-# 3. 放置文件
+# 3. 放置文件（本地或在线）
 mkdir -p /opt/dsh-public
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cp "$SCRIPT_DIR/cli.js" "$SCRIPT_DIR/proxy.js" /opt/dsh-public/ 2>/dev/null || {
-  echo "✗ 请把 install.sh / cli.js / proxy.js 放在同一目录"; exit 1;
-}
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+ok=1
+
+if [ -f "$SCRIPT_DIR/cli.js" ] && [ -f "$SCRIPT_DIR/proxy.js" ]; then
+  echo "✓ 从本地目录复制插件文件..."
+  cp "$SCRIPT_DIR/cli.js" "$SCRIPT_DIR/proxy.js" /opt/dsh-public/
+elif [ -n "$BASH_EXECUTION_STRING" ] || [ -p /dev/stdin ]; then
+  echo "… 在线下载插件文件（管道安装模式）..."
+  BASE="ideasir/verykey/main/dsh-public"
+  for f in cli.js proxy.js; do
+    got=0
+    for URL in \
+      "https://gh-proxy.com/https://raw.githubusercontent.com/$BASE/$f" \
+      "https://raw.githubusercontent.com/$BASE/$f" \
+      "https://cdn.jsdelivr.net/gh/ideasir/verykey@main/dsh-public/$f"; do
+      if curl -sL -m 60 -o "/opt/dsh-public/$f" "$URL" 2>/dev/null && node --check "/opt/dsh-public/$f" >/dev/null 2>&1; then
+        got=1; echo "  ✓ $f 下载完成"; break
+      fi
+    done
+    [ "$got" = "0" ] && { echo "✗ $f 下载失败（检查网络或手动拷贝）"; ok=0; }
+  done
+else
+  echo "✗ 缺少 cli.js/proxy.js——请把 install.sh/cli.js/proxy.js 放同一目录，或用:wget -qO- ...install.sh | bash"; exit 1
+fi
+
+[ "$ok" = "0" ] && exit 1
 chmod +x /opt/dsh-public/*.js
 echo "✓ 插件文件 → /opt/dsh-public/"
 
@@ -31,10 +52,10 @@ if ! command -v cloudflared >/dev/null 2>&1; then
     "https://github.com/cloudflare/cloudflared/releases/latest/download/$BIN" \
     "https://gh-proxy.com/https://github.com/cloudflare/cloudflared/releases/latest/download/$BIN"; do
     if curl -sL -m 120 -o /tmp/cloudflared "$URL" && chmod +x /tmp/cloudflared && mv /tmp/cloudflared /usr/local/bin/cloudflared; then
-      break
+      echo "✓ cloudflared 安装完成"; break
     fi
   done
-  command -v cloudflared >/dev/null 2>&1 && echo "✓ cloudflared 安装完成" || echo "⚠️ cloudflared 安装失败（可手动安装后重试）"
+  command -v cloudflared >/dev/null 2>&1 || echo "⚠️ cloudflared 安装失败（可手动安装后重试）"
 fi
 
 echo ""
