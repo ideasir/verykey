@@ -187,7 +187,7 @@ http.createServer((req, res) => {
   const up = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers }, (ur) => {
     const ct = (ur.headers['content-type'] || '').toString();
     const isStream = !!ur.headers['transfer-encoding'] || ct.includes('event-stream') || !ur.headers['content-length'];
-    const inject = (!isStream) ? bannerInject() : null;
+    const inject = (!isStream && process.env.DP_INJECT === '1') ? bannerInject() : null;
     if (inject && ct.includes('text/html') && req.method === 'GET') {
       const chunks = [];
       ur.on('data', c => chunks.push(c));
