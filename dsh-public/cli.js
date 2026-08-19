@@ -190,8 +190,7 @@ async function cmdBind(argv) {
   const domain = opt.domain || (await ask('请输入域名（如 dsh.example.com）: '));
   if (!domain) return console.error('✗ 需要域名');
   const cfg = loadCfg();
-  const user = cfg.user || 'admin', pass = cfg.password || '';
-  if (!pass) return console.error('✗ 请先运行 dsh public start 初始化');
+  // TOTP 认证与域名无关，绑定永久域名不会影响已绑定的验证器
 
   // nginx vhost（443 → 本机 proxy）→ proxy 转发 DSH
   const certDir = DIR + '/cert';
@@ -237,18 +236,15 @@ server {
   if (!certOk) { sh(`openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout ${certDir}/${domain}.key -out ${certDir}/${domain}.pem -subj '/CN=${domain}' 2>/dev/null`); log('（使用自签证书，浏览器会有安全提示；正式使用请配 acme.sh）'); }
   sh('chmod 644 ' + certDir + '/' + domain + '.pem; chmod 600 ' + certDir + '/' + domain + '.key');
 
-  // DSH trusted-host 改域名 + 停隧道
-  writeUnit('dsh', dshUnit(domain, DSH_PORT));
-  sh('systemctl daemon-reload && systemctl restart dsh');
+  // 只配 nginx + 证书 + 停临时隧道。DSH 服务与 TOTP 认证完全不改（认证与域名解耦）
   sh('systemctl stop dsh-tunnel');
   sh('nginx -t 2>&1 | tail -1; systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null');
 
   cfg.mode = 'domain'; cfg.domain = domain; cfg.publicUrl = 'https://' + domain;
   saveCfg(cfg);
   log('✅ 已绑定永久域名: https://' + domain);
-  log('   账号: ' + user + ' / ' + pass);
   log('   DNS 提示: 确保 ' + domain + ' 已解析到本机公网 IP（未解析时会显示证书/连接错误）');
-  log('   临时域名已休眠；需要时 dsh public tunnel 可临时重取');
+  log('   临时域名已失效；TOTP 绑定保持不变，直接用永久域名访问即可');
 }
 
 function cmdTunnel() {
