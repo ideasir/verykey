@@ -47,19 +47,12 @@ ln -sf /opt/dsh-public/cli.js /usr/local/bin/dsh-public
 chmod +x /usr/local/bin/dsh-public
 echo "✓ 插件文件 → /opt/dsh-public/（命令: dsh-public）"
 
-# 4. cloudflared（ARM/AMD 自动）
-if ! command -v cloudflared >/dev/null 2>&1; then
-  echo "… 安装 cloudflared..."
-  ARCH=$(uname -m)
-  BIN=$([ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ] && echo cloudflared-linux-arm64 || echo cloudflared-linux-amd64)
-  for URL in \
-    "https://github.com/cloudflare/cloudflared/releases/latest/download/$BIN" \
-    "https://gh-proxy.com/https://github.com/cloudflare/cloudflared/releases/latest/download/$BIN"; do
-    if curl -sL -m 120 -o /tmp/cloudflared "$URL" && chmod +x /tmp/cloudflared && mv /tmp/cloudflared /usr/local/bin/cloudflared; then
-      echo "✓ cloudflared 安装完成"; break
-    fi
-  done
-  command -v cloudflared >/dev/null 2>&1 || echo "⚠️ cloudflared 安装失败（可手动安装后重试）"
+# 4. acme.sh（HTTPS 证书自动签发）
+if [ ! -f /root/.acme.sh/acme.sh ]; then
+  echo "… 安装 acme.sh（HTTPS 证书工具）..."
+  curl -sL https://get.acme.sh | sh -s email=dsh@example.com >/dev/null 2>&1 || \
+    curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh | sh -s email=dsh@example.com >/dev/null 2>&1
+  [ -f /root/.acme.sh/acme.sh ] && echo "✓ acme.sh 安装完成" || echo "⚠️ acme.sh 安装失败（绑定时将使用自签证书）"
 fi
 
 echo ""
