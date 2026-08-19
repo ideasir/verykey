@@ -266,18 +266,27 @@ server {
   let certOk = false;
   if (acme) {
     sh('systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null');
+    // 修复1：明确用 Let's Encrypt（acme.sh 默认 ZeroSSL 在某些网络卡死）
+    // 修复2：注册账号用 admin@域名（默认 example.com 邮箱被 LE 拒绝）
+    sh('rm -f /root/.acme.sh/account.conf');
+    sh(`${acme} --register-account -m admin@${domain} --server letsencrypt >/dev/null 2>&1 || true`);
     const phasesC = ['正在连接证书签发机构...', '正在验证域名所有权（80 端口）...', '正在签发证书...'];
-    console.log('  ⏳ 证书申请中（' + domain + ' 的 80 端口需可公网访问）');
-    const proc = require('child_process').spawn('bash', ['-c', `${acme} --issue -d ${domain} --webroot /var/www/dsh-public --force 2>&1`]);
+    console.log('  ⏳ 证书申请中（' + domain + ' 的 80 端口需可公网访问，最长约 90 秒）');
+    const proc = require('child_process').spawn('bash', ['-c', `${acme} --issue --server letsencrypt -d ${domain} --webroot /var/www/dsh-public --force 2>&1`]);
     let outStr = '';
     let phase = 0;
     const iv = setInterval(() => {
       phase = Math.min(phase + 1, phasesC.length - 1);
       process.stdout.write('\r\u001b[K  ⏳ ' + phasesC[phase] + '   ');
-    }, 4000);
+    }, 5000);
     proc.stdout.on('data', d => outStr += d.toString());
     proc.stderr.on('data', d => outStr += d.toString());
-    await new Promise(res => proc.on('close', () => { clearInterval(iv); process.stdout.write('\r\u001b[K'); res(); }));
+    // 修复3：90 秒超时，卡死则杀进程转自签兜底（不再无限等）
+    const done = new Promise(res => proc.on('close', () => { clearInterval(iv); process.stdout.write('\r\u001b[K'); res(); }));
+    const to = new Promise(res => setTimeout(() => { try { proc.kill('SIGKILL'); } catch (e) {} res(); }, 90000));
+    await Promise.race([done, to]);
+    if (outStr.includes('Your cert is in')) console.log('  [✓] 证书签发命令已完成');
+    else if (outStr.trim()) console.log('  … 证书输出: ' + outStr.split('\n').filter(l => /error|fail|denied|invalid/i.test(l)).slice(0, 3).join(' | ').slice(0, 300));
     const cer = sh(`find /root/.acme.sh/${domain}_ecc -name fullchain.cer 2>/dev/null | head -1`) || sh(`find ~/.acme.sh/${domain}_ecc -name fullchain.cer 2>/dev/null | head -1`);
     const key = sh(`find /root/.acme.sh/${domain}_ecc -name '*.key' 2>/dev/null | grep privkey | head -1`) || sh(`find ~/.acme.sh/${domain}_ecc -name '*.key' 2>/dev/null | grep privkey | head -1`);
     if (cer && key) { sh(`cp ${cer} ${certDir}/${domain}.pem && cp ${key} ${certDir}/${domain}.key`); certOk = true; }
