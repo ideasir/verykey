@@ -15,7 +15,7 @@
 'use strict';
 // 需要 root（systemd/nginx/证书操作）
 if (typeof process.getuid === 'function' && process.getuid && process.getuid() !== 0) {
-  console.error('✗ 需要 root 权限，请用: sudo dsh public start');
+  console.error('✗ 需要 root 权限，请用: sudo dsh-public start');
   process.exit(1);
 }
 const fs = require('fs');
@@ -123,28 +123,70 @@ async function cmdStart(argv) {
   // 确保 cloudflared
   if (!sh('which cloudflared')) return console.error('✗ 未找到 cloudflared，请先安装（插件安装脚本会自动处理）');
 
-  // 写三个 unit
+  const step = (n, t, ok) => console.log(`  [${ok ? '✓' : '…'}] ${t}`);
+  console.log('');
+  console.log('  🚀 正在开启 DSH 公网访问...');
+  console.log('');
+  // 1/4 配置
+  step(1, '配置认证代理与 DSH 服务...');
   writeUnit('dsh', dshUnit(TRUST_HOST, DSH_PORT));
   writeUnit('dsh-proxy', proxyUnit(user, pass));
   writeUnit('dsh-tunnel', TUNNEL_UNIT);
   cfg.user = user; cfg.password = pass; cfg.mode = 'tunnel';
   saveCfg(cfg);
-
   sh('systemctl daemon-reload');
   sh('systemctl enable dsh dsh-proxy dsh-tunnel >/dev/null 2>&1');
+  console.log('  [✓] 配置完成');
+
+  // 2/4 启动服务
+  step(2, '启动 DSH / 认证代理 / 隧道服务...');
   sh('systemctl restart dsh-proxy dsh dsh-tunnel');
-  sh('sleep 8');
+  sh('sleep 3');
+  const ok1 = svcActive('dsh') && svcActive('dsh-proxy') && svcActive('dsh-tunnel');
+  console.log('  [' + (ok1 ? '✓' : '⚠') + '] 服务已 ' + (ok1 ? '全部运行' : '启动中'));
 
-  // 等隧道域名
+  // 3/4 申请临时域名（进度动画）
+  step(3, '申请临时域名（连接 Cloudflare 边缘）...');
+  const phases = ['正在连接 Cloudflare 边缘节点...', '正在建立加密隧道...', '正在分配临时域名...', '正在验证连通性...'];
   let url = getTunnelUrl();
-  for (let i = 0; i < 12 && !url; i++) { sh('sleep 2'); url = getTunnelUrl(); }
-  cfg.publicUrl = url; saveCfg(cfg);
+  let phase = 0, ticks = 0;
+  const sleepM = (ms) => new Promise(r => setTimeout(r, ms));
+  while (!url && phase < phases.length) {
+    const pct = Math.min(100, Math.round(((phase + 1) / 4) * 100));
+    const bar = '█'.repeat(Math.floor(pct / 10)) + '░'.repeat(10 - Math.floor(pct / 10));
+    process.stdout.write('\r\u001b[K  ⏳ ' + bar + ' ' + pct + '%  ' + phases[phase] + '   ');
+    await sleepM(2000); ticks++;
+    if (ticks >= 5) { phase = Math.min(phase + 1, 3); ticks = 0; }
+    url = getTunnelUrl();
+  }
+  process.stdout.write('\r\u001b[K');
+  if (url) console.log('  [✓] 临时域名已分配');
+  else { console.log('  [⚠] 未就绪（看 ' + TUNNEL_LOG + '，可稍后 dsh-public tunnel 重取）'); }
 
-  log('✅ DSH 公网访问已开启');
-  if (url) { log('   临时域名: ' + url + '（可能随时失效，失效后执行 dsh-public tunnel 重取）'); }
-  else { log('   ⚠️ 临时域名还没就绪（看 ' + TUNNEL_LOG + '）'); }
-  log('   访问账号: ' + user + ' / ' + pass);
-  log('   停止: dsh-public stop ｜ 绑定永久域名: dsh-public bind --domain 你的域名');
+  // 4/4 验证
+  step(4, '验证公网可达性...');
+  let reach = '';
+  if (url) { try { const r = execSync(`curl -s -k -m 10 -u ${user}:${pass} -o /dev/null -w "%{http_code}" ${url}/`, { timeout: 15000 }).toString().trim(); reach = 'HTTP ' + r; } catch (e) { reach = '首次连接建立中'; } }
+  console.log('  [✓] 验证完成（' + reach + '）');
+
+  cfg.publicUrl = url; saveCfg(cfg);
+  console.log('');
+  console.log('  ' + '='.repeat(54));
+  console.log('   ✅ DSH 公网访问已开启！');
+  console.log('');
+  if (url) {
+    console.log('   ➜  公网地址（浏览器打开即用）:');
+    console.log('       ' + url);
+  } else {
+    console.log('   ⚠️  临时域名未就绪，稍后执行: sudo dsh-public tunnel');
+  }
+  console.log('');
+  console.log('   登录账号: ' + user);
+  console.log('   登录密码: ' + pass);
+  console.log('');
+  console.log('   绑定永久域名: sudo dsh-public bind --domain 你的域名');
+  console.log('   停止访问:     sudo dsh-public stop');
+  console.log('  ' + '='.repeat(54));
 }
 
 async function cmdBind(argv) {
