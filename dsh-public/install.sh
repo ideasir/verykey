@@ -80,27 +80,22 @@ if [ -n "$ARG_DOMAIN" ]; then
   echo ""
   echo " … 正在全自动绑定 $ARG_DOMAIN（解析验证→nginx→证书→HTTPS）..."
   /usr/local/bin/dsh-public bind --domain "$ARG_DOMAIN"
-elif [ -t 0 ]; then
-  # 交互模式：引导输入域名
-  read -p " 请输入已解析到本机公网 IP 的域名（如 dsh.example.com；直接回车跳过）: " DOMAIN
+else
+  # 统一交互：从 /dev/tty 读（管道安装也能输入）
+  DOMAIN=""
+  if [ -e /dev/tty ]; then
+    printf "  请输入已解析到本机公网 IP 的域名（如 dsh.example.com）: "
+    read -r DOMAIN < /dev/tty
+  fi
   if [ -n "$DOMAIN" ]; then
     echo ""
     echo " … 正在全自动绑定 $DOMAIN（解析验证→nginx→证书→HTTPS）..."
     /usr/local/bin/dsh-public bind --domain "$DOMAIN"
   else
     echo ""
-    echo " ⚠️  已跳过域名绑定。之后随时执行:"
-    echo "     sudo dsh-public bind            # 按提示输入域名（推荐）"
-    echo "     sudo dsh-public bind --domain 你的域名"
+    echo " ⚠️  未提供域名，跳过绑定。"
+    echo "    之后随时执行: sudo dsh-public bind  （按提示输入域名即可）"
     echo ""
-    echo "     DSH 本地使用不受影响: http://127.0.0.1:3080"
+    echo "    DSH 本地使用不受影响: http://127.0.0.1:3080"
   fi
-else
-  # 管道安装模式且无参数：提示一条命令带域名
-  echo " ⚠️  未提供域名。一条命令安装+绑定："
-  echo ""
-  echo "     wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/ideasir/verykey/main/dsh-public/install.sh | sudo bash -s -- 你的域名"
-  echo "     # 或装好后执行: sudo dsh-public bind"
-  echo ""
-  echo "     DSH 本地使用不受影响: http://127.0.0.1:3080"
 fi
