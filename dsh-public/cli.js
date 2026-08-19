@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * dsh-public v3 — DSH 公网访问插件（终版）
+ * dsh-public v4 — DSH 公网访问插件
  *
- *   dsh public start                 # 一键开启：临时域名（交互输密码/回车自动生成）
- *   dsh public start --password xxx  # 指定密码
- *   dsh public bind --domain x.com   # 绑定自有域名（nginx+证书，临时隧道休眠）
- *   dsh public tunnel                # 重新获取临时域名（临时域名失效时）
- *   dsh public status                # 状态
- *   dsh public stop                  # 停止公网访问
+ *   dsh-public bind --domain x.com   绑定自有域名（推荐：全自动 DNS验证→nginx→证书→HTTPS）
+ *   dsh-public bind                  交互输入域名（安装后引导流程）
+ *   dsh-public status                状态
+ *   dsh-public stop                  停止公网访问
+ *   dsh-public auth-reset            重置 TOTP 绑定
  *
  * 架构（全部 systemd 常驻，断线自愈）：
- *   cloudflared(dsh-tunnel) → proxy(dsh-proxy,认证+Host改写) → DSH(dsh,仅本地)
+ *   nginx(443,证书) → proxy(dsh-proxy,TOTP认证) → DSH(dsh,仅本地)   [SSE 直通]
  */
 'use strict';
 // 需要 root（systemd/nginx/证书操作）
@@ -187,12 +186,42 @@ async function cmdStart(argv) {
 
 async function cmdBind(argv) {
   const opt = parseArgs(argv);
-  const domain = opt.domain || (await ask('请输入域名（如 dsh.example.com）: '));
+  let domain = opt.domain || '';
+  if (!domain) {
+    const a = await ask('请输入已解析到本机公网 IP 的域名（如 dsh.example.com）: ');
+    domain = (a || '').trim();
+  }
   if (!domain) return console.error('✗ 需要域名');
-  const cfg = loadCfg();
-  // TOTP 认证与域名无关，绑定永久域名不会影响已绑定的验证器
+  if (!/^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$/.test(domain)) return console.error('✗ 域名格式不正确: ' + domain);
+  await setupDomain(domain);
+}
 
-  // nginx vhost（443 → 本机 proxy）→ proxy 转发 DSH
+async function setupDomain(domain) {
+  const cfg = loadCfg();
+  const sleepM = (ms) => new Promise(r => setTimeout(r, ms));
+  console.log('');
+  console.log('  📡 正在绑定域名 ' + domain + ' ...');
+  console.log('');
+  const step = (n, t, ok) => console.log('  [' + (ok ? '✓' : '…') + '] 第 ' + n + ' 步：' + t);
+
+  // ── 1/5 DNS 解析验证 ──
+  step(1, '验证域名解析（DNS）...');
+  const myip = sh("curl -s -m 10 https://ifconfig.me/ || curl -s -m 10 https://api.ipify.org/ || echo ''").trim();
+  const dnsA = sh(`dig +short ${domain} A 2>/dev/null | head -1`).trim() || sh(`nslookup ${domain} 2>/dev/null | grep -A1 'Name:' | grep Address | awk '{print $2}' | head -1`).trim();
+  let dnsOK = false, hint = '';
+  if (dnsA && myip && dnsA === myip) { dnsOK = true; hint = '解析 ' + dnsA + ' = 本机 ' + myip + ' ✅'; }
+  else if (dnsA && !myip) { dnsOK = true; hint = '解析 ' + dnsA + '（未取到本机 IP，跳过比对）'; }
+  else if (!dnsA) { hint = '未查到 A 记录——请先到域名服务商把 ' + domain + ' 解析到本机公网 IP（' + (myip || '查询本机 IP 失败') + '）'; }
+  else { hint = '解析 ' + dnsA + ' ≠ 本机 ' + myip + ' ——请改为解析到本机公网 IP'; }
+  if (dnsOK) console.log('  [✓] DNS 检查通过（' + hint + '）');
+  else {
+    console.log('  [⚠] ' + hint);
+    const c = await ask('    解析可能还没生效/不一致，仍要继续绑定吗？(y/N) ');
+    if (c.toLowerCase() !== 'y') { console.log('  ✗ 已取消。请先解析域名后重试: sudo dsh-public bind'); return; }
+  }
+
+  // ── 2/5 nginx 配置 ──
+  step(2, '配置 nginx 反向代理...');
   const certDir = DIR + '/cert';
   fs.mkdirSync(certDir, { recursive: true });
   const conf = `# dsh-public: ${domain}
@@ -218,33 +247,76 @@ server {
     }
 }
 `;
-  writeUnit('dsh-domain', conf); // 借用 writeUnit 写临时文件
   fs.writeFileSync('/tmp/dsh-public-domain.conf', conf);
   const sitesDir = fs.existsSync('/etc/nginx/sites-enabled') ? '/etc/nginx/sites-enabled' : '/etc/nginx/conf.d';
   sh(`cp /tmp/dsh-public-domain.conf ${sitesDir}/dsh-public.conf`);
   sh('mkdir -p /var/www/dsh-public');
+  console.log('  [✓] nginx 配置已写入（' + sitesDir + '/dsh-public.conf）');
 
-  // 证书：acme.sh 优先，自签兜底
-  const acme = sh('which acme.sh') || sh('ls ~/.acme.sh/acme.sh 2>/dev/null');
+  // ── 3/5 证书 ──
+  step(3, '申请 HTTPS 证书（acme.sh，可能需要 1-2 分钟）...');
+  let acme = sh('which acme.sh') || sh('ls ~/.acme.sh/acme.sh 2>/dev/null');
+  if (!acme && !sh('ls /root/.acme.sh/acme.sh 2>/dev/null')) {
+    console.log('  … 未检测到 acme.sh，自动安装中...');
+    sh("curl -sL https://get.acme.sh | sh -s email=dsh@example.com >/dev/null 2>&1 || curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh | sh -s email=dsh@example.com >/dev/null 2>&1");
+    sh('/root/.acme.sh/acme.sh --register-account -m dsh@example.com >/dev/null 2>&1 || true');
+  }
+  acme = sh('ls /root/.acme.sh/acme.sh 2>/dev/null') || sh('ls ~/.acme.sh/acme.sh 2>/dev/null') || sh('which acme.sh 2>/dev/null');
+  if (!acme) { console.log('  [⚠] acme.sh 安装失败，改用自签证书（浏览器会有安全提示；后续可手动配证书）'); }
   let certOk = false;
   if (acme) {
-    sh(`${acme} --issue -d ${domain} --webroot /var/www/dsh-public --force 2>&1 | tail -2`);
-    const cer = sh(`find ~/.acme.sh/${domain}_ecc -name fullchain.cer 2>/dev/null | head -1`);
-    const key = sh(`find ~/.acme.sh/${domain}_ecc -name '*.key' 2>/dev/null | grep privkey | head -1`);
+    sh('systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null');
+    const phasesC = ['正在连接证书签发机构...', '正在验证域名所有权（80 端口）...', '正在签发证书...'];
+    console.log('  ⏳ 证书申请中（' + domain + ' 的 80 端口需可公网访问）');
+    const proc = require('child_process').spawn('bash', ['-c', `${acme} --issue -d ${domain} --webroot /var/www/dsh-public --force 2>&1`]);
+    let outStr = '';
+    let phase = 0;
+    const iv = setInterval(() => {
+      phase = Math.min(phase + 1, phasesC.length - 1);
+      process.stdout.write('\r\u001b[K  ⏳ ' + phasesC[phase] + '   ');
+    }, 4000);
+    proc.stdout.on('data', d => outStr += d.toString());
+    proc.stderr.on('data', d => outStr += d.toString());
+    await new Promise(res => proc.on('close', () => { clearInterval(iv); process.stdout.write('\r\u001b[K'); res(); }));
+    const cer = sh(`find /root/.acme.sh/${domain}_ecc -name fullchain.cer 2>/dev/null | head -1`) || sh(`find ~/.acme.sh/${domain}_ecc -name fullchain.cer 2>/dev/null | head -1`);
+    const key = sh(`find /root/.acme.sh/${domain}_ecc -name '*.key' 2>/dev/null | grep privkey | head -1`) || sh(`find ~/.acme.sh/${domain}_ecc -name '*.key' 2>/dev/null | grep privkey | head -1`);
     if (cer && key) { sh(`cp ${cer} ${certDir}/${domain}.pem && cp ${key} ${certDir}/${domain}.key`); certOk = true; }
   }
-  if (!certOk) { sh(`openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout ${certDir}/${domain}.key -out ${certDir}/${domain}.pem -subj '/CN=${domain}' 2>/dev/null`); log('（使用自签证书，浏览器会有安全提示；正式使用请配 acme.sh）'); }
+  if (!certOk) {
+    sh(`openssl req -x509 -newkey rsa:2048 -nodes -days 365 -keyout ${certDir}/${domain}.key -out ${certDir}/${domain}.pem -subj '/CN=${domain}' 2>/dev/null`);
+    console.log('  [⚠] 已用自签证书（正式使用请确保 acme.sh 能签发）');
+  }
+  if (certOk) console.log('  [✓] HTTPS 证书申请成功');
   sh('chmod 644 ' + certDir + '/' + domain + '.pem; chmod 600 ' + certDir + '/' + domain + '.key');
 
-  // 只配 nginx + 证书 + 停临时隧道。DSH 服务与 TOTP 认证完全不改（认证与域名解耦）
-  sh('systemctl stop dsh-tunnel');
-  sh('nginx -t 2>&1 | tail -1; systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null');
-
+  // ── 4/5 停临时隧道 + 加载反代 ──
+  step(4, '启用 HTTPS 反代（停用临时隧道）...');
+  sh('systemctl stop dsh-tunnel 2>/dev/null');
+  sh('nginx -t 2>&1 | tail -1');
+  sh('systemctl reload nginx 2>/dev/null || nginx -s reload 2>/dev/null');
   cfg.mode = 'domain'; cfg.domain = domain; cfg.publicUrl = 'https://' + domain;
   saveCfg(cfg);
-  log('✅ 已绑定永久域名: https://' + domain);
-  log('   DNS 提示: 确保 ' + domain + ' 已解析到本机公网 IP（未解析时会显示证书/连接错误）');
-  log('   临时域名已失效；TOTP 绑定保持不变，直接用永久域名访问即可');
+  console.log('  [✓] HTTPS 反代已启用');
+
+  // ── 5/5 验证 ──
+  step(5, '验证公网可达性...');
+  let reach = '';
+  for (let i = 0; i < 6; i++) {
+    try { const r = execSync(`curl -s -k -m 10 -o /dev/null -w "%{http_code}" https://${domain}/__dp/login`, { timeout: 15000 }).toString().trim(); if (r === '200') { reach = 'HTTP ' + r; break; } reach = 'HTTP ' + r; } catch (e) { reach = '等待生效中'; }
+    await sleepM(5000);
+  }
+  console.log('  [' + (reach === 'HTTP 200' ? '✓' : '⚠') + '] ' + (reach === 'HTTP 200' ? '验证完成（' + reach + '）' : '暂未响应（' + reach + '，可稍后 dsh-public status 查看）'));
+
+  console.log('');
+  console.log('  ' + '='.repeat(54));
+  console.log('   ✅ DSH 已绑定域名！');
+  console.log('');
+  console.log('   ➜  外网地址（浏览器打开即用）:');
+  console.log('       ' + 'https://' + domain);
+  console.log('');
+  console.log('   首次访问: 页面显示二维码，手机验证器扫码绑定后输入 6 位动态码');
+  console.log('   TOTP 绑定不受域名影响，之前绑定过则直接输动态码');
+  console.log('  ' + '='.repeat(54));
 }
 
 function cmdTunnel() {
