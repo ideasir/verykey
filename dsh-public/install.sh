@@ -41,7 +41,10 @@ fi
 
 [ "$ok" = "0" ] && exit 1
 chmod +x /opt/dsh-public/*.js
-echo "✓ 插件文件 → /opt/dsh-public/"
+# 创建 `dsh-public` 命令（等同 cli.js）
+ln -sf /opt/dsh-public/cli.js /usr/local/bin/dsh-public
+chmod +x /usr/local/bin/dsh-public
+echo "✓ 插件文件 → /opt/dsh-public/（命令: dsh-public）"
 
 # 4. cloudflared（ARM/AMD 自动）
 if ! command -v cloudflared >/dev/null 2>&1; then
@@ -60,6 +63,6 @@ fi
 
 echo ""
 echo "✅ 安装完成！开启公网访问："
-echo "   sudo dsh public start"
-echo "   绑定永久域名：sudo dsh public bind --domain 你的域名"
-echo "   查看状态：sudo dsh public status"
+echo "   sudo dsh-public start"
+echo "   绑定永久域名：sudo dsh-public bind --domain 你的域名"
+echo "   查看状态：sudo dsh-public status"
