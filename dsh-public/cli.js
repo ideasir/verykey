@@ -53,7 +53,7 @@ User=root
 WantedBy=multi-user.target
 `;
 }
-function proxyUnit(user, pass) {
+function proxyUnit() {
   return `[Unit]
 Description=dsh-public proxy
 After=network.target
@@ -62,8 +62,7 @@ After=network.target
 ExecStart=/usr/bin/node ${PROXY}
 Environment=DP_PORT=${PROXY_PORT}
 Environment=DP_TRUST_HOST=${TRUST_HOST}
-Environment=DP_USER=${user}
-Environment=DP_PASS=${pass}
+Environment=DP_DIR=${DIR}
 Restart=always
 RestartSec=2
 User=root
@@ -113,9 +112,7 @@ function ask(prompt) {
 async function cmdStart(argv) {
   const opt = parseArgs(argv);
   const cfg = loadCfg();
-  const user = opt.user || cfg.user || 'admin';
-  let pass = opt.password || cfg.password || '';
-  if (!pass) { pass = crypto.randomBytes(9).toString('base64url'); log('已自动生成访问密码: ' + pass + '（存储于 ' + CONFIG + '）'); }
+  // TOTP 认证：无需密码，首次访问页面扫码绑定手机验证器
 
   // 确保 proxy.js 存在
   if (!fs.existsSync(PROXY)) return console.error('✗ 缺少 ' + PROXY + '（插件未完整安装）');
@@ -130,9 +127,9 @@ async function cmdStart(argv) {
   // 1/4 配置
   step(1, '配置认证代理与 DSH 服务...');
   writeUnit('dsh', dshUnit(TRUST_HOST, DSH_PORT));
-  writeUnit('dsh-proxy', proxyUnit(user, pass));
+  writeUnit('dsh-proxy', proxyUnit());
   writeUnit('dsh-tunnel', TUNNEL_UNIT);
-  cfg.user = user; cfg.password = pass; cfg.mode = 'tunnel';
+  cfg.mode = 'tunnel';
   saveCfg(cfg);
   sh('systemctl daemon-reload');
   sh('systemctl enable dsh dsh-proxy dsh-tunnel >/dev/null 2>&1');
@@ -166,7 +163,7 @@ async function cmdStart(argv) {
   // 4/4 验证
   step(4, '验证公网可达性...');
   let reach = '';
-  if (url) { try { const r = execSync(`curl -s -k -m 10 -u ${user}:${pass} -o /dev/null -w "%{http_code}" ${url}/`, { timeout: 15000 }).toString().trim(); reach = 'HTTP ' + r; } catch (e) { reach = '首次连接建立中'; } }
+  if (url) { try { const r = execSync(`curl -s -k -m 10 -o /dev/null -w "%{http_code}" ${url}/__dp/login`, { timeout: 15000 }).toString().trim(); reach = '认证页 HTTP ' + r; } catch (e) { reach = '首次连接建立中'; } }
   console.log('  [✓] 验证完成（' + reach + '）');
 
   cfg.publicUrl = url; saveCfg(cfg);
@@ -181,8 +178,7 @@ async function cmdStart(argv) {
     console.log('   ⚠️  临时域名未就绪，稍后执行: sudo dsh-public tunnel');
   }
   console.log('');
-  console.log('   登录账号: ' + user);
-  console.log('   登录密码: ' + pass);
+  console.log('   首次访问: 页面会显示二维码，用手机验证器扫码绑定后输入动态码即可');
   console.log('');
   console.log('   绑定永久域名: sudo dsh-public bind --domain 你的域名');
   console.log('   停止访问:     sudo dsh-public stop');
@@ -270,11 +266,11 @@ function cmdStatus() {
   if (!cfg.user) return console.log('未开启。运行: dsh public start');
   console.log('公网地址: ' + (cfg.publicUrl || '-'));
   console.log('模式: ' + (cfg.mode === 'domain' ? '自有域名 ' + cfg.domain : 'CF 临时域名'));
-  console.log('账号: ' + cfg.user + ' / ' + cfg.password);
+  console.log("认证: TOTP 手机验证器（" + (fs.existsSync(DIR + '/auth.json') && JSON.parse(fs.readFileSync(DIR + '/auth.json', 'utf-8')).bound ? '已绑定 ✅' : '未绑定 ⚠ 首次访问页面扫码绑定') + "）");
   console.log('服务: dsh=' + (svcActive('dsh') ? '✅' : '❌') + ' dsh-proxy=' + (svcActive('dsh-proxy') ? '✅' : '❌') + ' dsh-tunnel=' + (svcActive('dsh-tunnel') ? '✅' : '❌'));
   try { const r = sh('curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:' + DSH_PORT + '/'); console.log('DSH 本地: HTTP ' + r); } catch (e) { console.log('DSH 本地: 未响应'); }
   if (cfg.publicUrl) {
-    try { const r = sh(`curl -s -k -m 10 -u ${cfg.user}:${cfg.password} -o /dev/null -w "%{http_code}" ${cfg.publicUrl}/`); console.log('公网访问: HTTP ' + r); } catch (e) { console.log('公网访问: 未响应'); }
+    try { const r = sh(`curl -s -k -m 10 -o /dev/null -w "%{http_code}" ${cfg.publicUrl}/__dp/login`); console.log('公网访问(认证页): HTTP ' + r); } catch (e) { console.log('公网访问: 未响应'); }
   }
 }
 
