@@ -141,10 +141,10 @@ async function cmdStart(argv) {
   cfg.publicUrl = url; saveCfg(cfg);
 
   log('✅ DSH 公网访问已开启');
-  if (url) { log('   临时域名: ' + url + '（可能随时失效，失效后执行 dsh public tunnel 重取）'); }
+  if (url) { log('   临时域名: ' + url + '（可能随时失效，失效后执行 dsh-public tunnel 重取）'); }
   else { log('   ⚠️ 临时域名还没就绪（看 ' + TUNNEL_LOG + '）'); }
   log('   访问账号: ' + user + ' / ' + pass);
-  log('   停止: dsh public stop ｜ 绑定永久域名: dsh public bind --domain 你的域名');
+  log('   停止: dsh-public stop ｜ 绑定永久域名: dsh-public bind --domain 你的域名');
 }
 
 async function cmdBind(argv) {
