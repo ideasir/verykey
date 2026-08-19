@@ -63,7 +63,16 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "✅ 安装完成！开启公网访问："
-echo "   sudo dsh-public start"
-echo "   绑定永久域名：sudo dsh-public bind --domain 你的域名"
-echo "   查看状态：sudo dsh-public status"
+echo "✅ 安装完成！"
+
+# 5. 自动开启公网访问（DSH 本地在跑则直接 start 返回公网地址）
+DSH_HTTP=$(curl -s -m 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ 2>/dev/null || echo 000)
+if [ "$DSH_HTTP" = "200" ] || [ "$DSH_HTTP" = "302" ] || [ "$DSH_HTTP" = "404" ]; then
+  echo "… 检测到 DSH 本地已运行（HTTP $DSH_HTTP），正在自动开启公网访问..."
+  /usr/local/bin/dsh-public start
+else
+  echo ""
+  echo "⚠️  未检测到本地 DSH（127.0.0.1:3080 未响应，HTTP=$DSH_HTTP）"
+  echo "    请先启动 DSH，再运行："
+  echo "    sudo dsh-public start"
+fi
