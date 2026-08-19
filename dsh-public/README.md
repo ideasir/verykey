@@ -17,9 +17,10 @@
 ## 安装
 
 ```bash
-# 需要 root；cloudflared 自动下载（GitHub 多源）
-bash install.sh
+# 一条命令（root/普通用户均可，加 sudo）
+wget -qO- https://gh-proxy.com/https://raw.githubusercontent.com/ideasir/verykey/main/dsh-public/install.sh | sudo bash
 ```
+自动：下载部署插件文件 + 创建 `dsh-public` 命令 + 安装 cloudflared（GitHub 多源）。
 
 ## 使用
 
@@ -43,12 +44,22 @@ sudo dsh-public status
 sudo dsh-public stop   # 停公网；DSH 本地 127.0.0.1:3080 保持可用
 ```
 
+## 卸载
+
+```bash
+sudo dsh-public stop
+sudo rm -f /etc/systemd/system/dsh-tunnel.service /etc/systemd/system/dsh-proxy.service
+sudo systemctl daemon-reload
+sudo rm -rf /opt/dsh-public /usr/local/bin/dsh-public
+# DSH 本体不受影响（本地 127.0.0.1:3080 继续可用）
+```
+
 ## 说明
 
 - 三个 systemd 服务（dsh / dsh-proxy / dsh-tunnel）全部自动重启，崩溃/断线自愈
-- 临时域名（trycloudflare）免费、无需账号，但**域名随机、可能随时失效**——失效就在 DSH 里让 AI 帮你跑 `dsh public tunnel`，或绑定永久域名一劳永逸
-- 绑定了永久域名后临时隧道自动休眠；需要临时用可再 `dsh public tunnel`
-- 浏览器首次访问临时域名输入账号密码（`admin` + 密码）即可，功能与本地完全一致
+- 临时域名（trycloudflare）免费、无需账号，但**域名随机、可能随时失效**——失效就跑 `sudo dsh-public tunnel`，或绑定永久域名一劳永逸
+- 绑定了永久域名后临时隧道自动休眠；需要临时用可再 `dsh-public tunnel`
+- 浏览器首次访问输入账号密码（`admin` + 密码）即可，功能与本地完全一致
 
 ## 文件
 
@@ -56,4 +67,4 @@ sudo dsh-public stop   # 停公网；DSH 本地 127.0.0.1:3080 保持可用
 |------|------|
 | `cli.js` | 主程序（start/bind/tunnel/status/stop）|
 | `proxy.js` | 认证代理（账号密码 + Host 改写转发）|
-| `install.sh` | 一键安装（cloudflared + 文件部署）|
+| `install.sh` | 一键安装（cloudflared + 文件部署 + dsh-public 命令）|
