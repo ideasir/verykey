@@ -181,8 +181,8 @@ http.createServer((req, res) => {
     res.end();
     return;
   }
-  // 转发 DSH（Host 改写 + 临时域名横幅注入）
-  const headers = Object.assign({}, req.headers, { host: TRUST_HOST });
+  // 转发 DSH（Host + Origin 改写，绕开 DSH 的 browser-trust fence；临时/永久域名随意换）
+  const headers = Object.assign({}, req.headers, { host: TRUST_HOST, origin: 'http://' + TRUST_HOST });
   const up = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers }, (ur) => {
     const ct = (ur.headers['content-type'] || '').toString();
     const inject = bannerInject();
