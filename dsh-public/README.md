@@ -25,22 +25,22 @@ bash install.sh
 
 ```bash
 # 一键开启（临时域名，10 秒内可用）
-sudo dsh public start
+sudo dsh-public start
 # → 输出: https://xxx.trycloudflare.com + 账号(admin) + 自动生成密码
 
 # 指定密码
-sudo dsh public start --password 你的密码
+sudo dsh-public start --password 你的密码
 
 # 绑定永久域名（需该域名 DNS 解析到本机公网 IP）
-sudo dsh public bind --domain dsh.example.com
+sudo dsh-public bind --domain dsh.example.com
 # → https://dsh.example.com（acme.sh 自动证书；无 acme 则自签）
 
 # 临时域名失效后重取
-sudo dsh public tunnel
+sudo dsh-public tunnel
 
 # 状态 / 停止
-sudo dsh public status
-sudo dsh public stop   # 停公网；DSH 本地 127.0.0.1:3080 保持可用
+sudo dsh-public status
+sudo dsh-public stop   # 停公网；DSH 本地 127.0.0.1:3080 保持可用
 ```
 
 ## 说明
