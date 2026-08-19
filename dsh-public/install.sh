@@ -20,10 +20,11 @@ ok=1
 if [ -f "$SCRIPT_DIR/cli.js" ] && [ -f "$SCRIPT_DIR/proxy.js" ]; then
   echo "✓ 从本地目录复制插件文件..."
   cp "$SCRIPT_DIR/cli.js" "$SCRIPT_DIR/proxy.js" /opt/dsh-public/
+  [ -f "$SCRIPT_DIR/qrcode.min.js" ] && cp "$SCRIPT_DIR/qrcode.min.js" /opt/dsh-public/
 elif [ -n "$BASH_EXECUTION_STRING" ] || [ -p /dev/stdin ]; then
   echo "… 在线下载插件文件（管道安装模式）..."
   BASE="ideasir/verykey/main/dsh-public"
-  for f in cli.js proxy.js; do
+  for f in cli.js proxy.js qrcode.min.js; do
     got=0
     for URL in \
       "https://gh-proxy.com/https://raw.githubusercontent.com/$BASE/$f" \
