@@ -181,8 +181,9 @@ http.createServer((req, res) => {
     res.end();
     return;
   }
-  // 转发 DSH（Host + Origin 改写，绕开 DSH 的 browser-trust fence；临时/永久域名随意换）
-  const headers = Object.assign({}, req.headers, { host: TRUST_HOST, origin: 'http://' + TRUST_HOST });
+  // 转发 DSH：Host/Origin 原样传 127.0.0.1:3080（DSH 当本地访问，settings 等敏感 API 才放行）
+  // 备注：早期用 Host 改写 dsh.local 绕 browser-trust，但 settings.* 等 API 要求真本地（Host=127.0.0.1）
+  const headers = Object.assign({}, req.headers, { host: UP_HOST + ':' + UP_PORT, origin: 'http://' + UP_HOST + ':' + UP_PORT });
   const up = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers }, (ur) => {
     const ct = (ur.headers['content-type'] || '').toString();
     const inject = bannerInject();
