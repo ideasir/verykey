@@ -182,11 +182,12 @@ http.createServer((req, res) => {
     return;
   }
   // 转发 DSH：Host/Origin 原样传 127.0.0.1:3080（DSH 当本地访问，settings 等敏感 API 才放行）
-  // 备注：早期用 Host 改写 dsh.local 绕 browser-trust，但 settings.* 等 API 要求真本地（Host=127.0.0.1）
+  // 注入横幅只对“完整页面”（有 Content-Length 的静态 HTML）做；流式响应（chunked/event-stream）必须直接透传，否则模型回复被缓冲不显示
   const headers = Object.assign({}, req.headers, { host: UP_HOST + ':' + UP_PORT, origin: 'http://' + UP_HOST + ':' + UP_PORT });
   const up = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers }, (ur) => {
     const ct = (ur.headers['content-type'] || '').toString();
-    const inject = bannerInject();
+    const isStream = !!ur.headers['transfer-encoding'] || ct.includes('event-stream') || !ur.headers['content-length'];
+    const inject = (!isStream) ? bannerInject() : null;
     if (inject && ct.includes('text/html') && req.method === 'GET') {
       const chunks = [];
       ur.on('data', c => chunks.push(c));
