@@ -282,9 +282,19 @@ function cmdStop() {
   if (cfg.mode === 'domain') { sh('rm -f /etc/nginx/sites-enabled/dsh-public.conf /etc/nginx/conf.d/dsh-public.conf; systemctl reload nginx 2>/dev/null'); }
 }
 
+function cmdAuthReset() {
+  // 重置 TOTP 绑定：删除 auth.json + 重启代理 → 下次访问重新扫码绑定
+  sh('rm -f ' + DIR + '/auth.json');
+  sh('systemctl restart dsh-proxy');
+  console.log('✅ 认证已重置');
+  console.log('   下次浏览器打开公网地址会重新显示「绑定二维码」，扫码重新绑定即可');
+  console.log('   （绑定一次后二维码不再出现，防止他人抢绑）');
+}
+
 const cmd = process.argv[2];
 switch (cmd) {
   case 'start': cmdStart(process.argv.slice(3)); break;
+  case 'auth-reset': cmdAuthReset(); break;
   case 'bind': cmdBind(process.argv.slice(3)); break;
   case 'tunnel': cmdTunnel(); break;
   case 'status': cmdStatus(); break;
@@ -292,10 +302,11 @@ switch (cmd) {
   default:
     console.log(`dsh-public v3 — DSH 公网访问插件
 用法:
-  dsh public start [--password xxx]     一键开启（临时域名）
-  dsh public bind --domain x.com        绑定永久域名
-  dsh public tunnel                     重取临时域名（失效时）
-  dsh public status                     状态
-  dsh public stop                       停止
+  dsh-public start [--password xxx]     一键开启（临时域名）
+  dsh-public bind --domain x.com        绑定永久域名
+  dsh-public tunnel                     重取临时域名（失效时）
+  dsh-public auth-reset                 重置 TOTP 绑定（重新扫码）
+  dsh-public status                     状态
+  dsh-public stop                       停止
 架构: cloudflared → 认证代理 → DSH(仅本地)，全 systemd 断线自愈`);
 }
