@@ -64,15 +64,41 @@ fi
 
 echo ""
 echo "✅ 安装完成！"
+echo "════════════════════════════════════════════"
+echo " 📌 最后一步：绑定公网域名（没有域名则无法公网访问）"
+echo ""
 
-# 5. 自动开启公网访问（DSH 本地在跑则直接 start 返回公网地址）
+# 5. 检测 DSH 本地是否运行
 DSH_HTTP=$(curl -s -m 4 -o /dev/null -w "%{http_code}" http://127.0.0.1:3080/ 2>/dev/null || echo 000)
-if [ "$DSH_HTTP" = "200" ] || [ "$DSH_HTTP" = "302" ] || [ "$DSH_HTTP" = "404" ]; then
-  echo "… 检测到 DSH 本地已运行（HTTP $DSH_HTTP），正在自动开启公网访问..."
-  /usr/local/bin/dsh-public start
+if [ "$DSH_HTTP" != "200" ] && [ "$DSH_HTTP" != "302" ] && [ "$DSH_HTTP" != "404" ]; then
+  echo "⚠️  未检测到本地 DSH（127.0.0.1:3080 未响应）"
+  echo "   请先启动 DSH，再运行：sudo dsh-public bind"
+  echo "   （DSH 本地使用不受影响，当 DSH 运行后随时可绑定域名）"
+  exit 0
+fi
+
+if [ -t 0 ]; then
+  # 交互模式：引导输入域名
+  read -p " 请输入已解析到本机公网 IP 的域名（如 dsh.example.com；直接回车跳过）: " DOMAIN
+  if [ -n "$DOMAIN" ]; then
+    echo ""
+    echo " … 正在全自动绑定 $DOMAIN（解析验证→nginx→证书→HTTPS）..."
+    /usr/local/bin/dsh-public bind --domain "$DOMAIN"
+  else
+    echo ""
+    echo " ⚠️  已跳过域名绑定。之后随时执行:"
+    echo "     sudo dsh-public bind            # 按提示输入域名（推荐）"
+    echo "     sudo dsh-public bind --domain 你的域名"
+    echo ""
+    echo "     DSH 本地使用不受影响: http://127.0.0.1:3080"
+  fi
 else
+  # 管道安装模式（wget | sudo bash）：无法交互，提示手动执行
+  echo " ⚠️  检测到非交互安装，跳过域名引导。"
+  echo "    装好后执行下面命令绑定域名（全自动）："
   echo ""
-  echo "⚠️  未检测到本地 DSH（127.0.0.1:3080 未响应，HTTP=$DSH_HTTP）"
-  echo "    请先启动 DSH，再运行："
-  echo "    sudo dsh-public start"
+  echo "     sudo dsh-public bind"
+  echo "     # 或直接指定: sudo dsh-public bind --domain 你的域名"
+  echo ""
+  echo "     DSH 本地使用不受影响: http://127.0.0.1:3080"
 fi
