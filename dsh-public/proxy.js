@@ -20,6 +20,29 @@ const DP_DIR = process.env.DP_DIR || '/opt/dsh-public';
 const LOG = process.env.DP_LOG || '/tmp/dsh-public-proxy.log';
 
 const AUTH_FILE = path.join(DP_DIR, 'auth.json');
+const CFG_FILE = path.join(DP_DIR, 'config.json');
+
+function loadCfg() { try { return JSON.parse(fs.readFileSync(CFG_FILE, 'utf-8')); } catch (e) { return {}; } }
+// 注入脚本：临时域名提示横幅（仅临时域名模式注入）
+function bannerInject() {
+  const cfg = loadCfg();
+  if (!cfg || cfg.mode === 'domain') return null; // 永久域名模式不提示
+  const url = cfg.publicUrl || '';
+  return `<script>
+(function(){
+  try{
+    if(localStorage.getItem('dshpub_dismissed')) return;
+    var b=document.createElement('div');
+    b.id='dshpub-banner';
+    b.innerHTML='<div style="display:flex;align-items:center;gap:12px;padding:12px 18px;background:linear-gradient(135deg,#7c2d12,#9a3412);color:#fde68a;font:600 13px/1.5 system-ui;box-shadow:0 4px 24px rgba(0,0,0,.35);border-bottom:1px solid rgba(251,191,36,.3)"><span style="font-size:16px">⚠️</span><div style="flex:1"><b>当前使用临时域名</b>（${url||'未知'}）· 临时域名可能随时变更，建议绑定永久域名后更稳定。<span id="dshpub-how" style="color:#fbbf24;text-decoration:underline;cursor:pointer">绑定永久域名</span></div><span id="dshpub-x" style="cursor:pointer;opacity:.8;font-size:18px;padding:0 4px">✕</span></div><div id="dshpub-detail" style="display:none;background:#0c1220;color:#cbd5e1;font:13px/1.7 system-ui;padding:14px 18px">在服务器上执行：<code style="background:#1e293b;padding:2px 8px;border-radius:6px;color:#7dd3fc">sudo dsh-public bind --domain 你的域名.com</code><br>（需先把域名 DNS 解析到本机公网 IP。绑定后临时域名失效，此提示不再出现，TOTP 验证器绑定保持不变）</div>';
+    b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:999999;font-family:system-ui';
+    b.querySelector('#dshpub-how').onclick=function(){var d=b.querySelector('#dshpub-detail');d.style.display=d.style.display==='none'?'block':'none'};
+    b.querySelector('#dshpub-x').onclick=function(){b.remove();try{localStorage.setItem('dshpub_dismissed','1')}catch(e){}};
+    document.documentElement.appendChild(b);
+  }catch(e){}
+})();
+</script>`;
+}
 
 function log(m) { try { fs.appendFileSync(LOG, `[${new Date().toISOString()}] ${m}\n`); } catch (e) {} }
 function loadAuth() { try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf-8')); } catch (e) { return {}; } }
@@ -106,7 +129,7 @@ h2{font-size:20px;font-weight:600;margin:16px 0 4px}
     <div class="step"><div class="n">2</div><div class="t">扫描下方二维码添加「DSH公网」</div></div>
     <div class="step"><div class="n">3</div><div class="t">输入 6 位动态码完成绑定</div></div>
   </div>`}
-  <div id="qrcode-wrap">${auth.bound ? '' : '<div id="qrcode"></div>'}</div>
+  ${auth.bound ? '' : '<div id="qrcode-wrap"><div id="qrcode"></div></div>'}
   <div class="code-row" id="row">
     <input maxlength="1" id="c0"><input maxlength="1" id="c1"><input maxlength="1" id="c2"><input maxlength="1" id="c3"><input maxlength="1" id="c4"><input maxlength="1" id="c5">
   </div>
@@ -158,9 +181,28 @@ http.createServer((req, res) => {
     res.end();
     return;
   }
-  // 转发 DSH（Host 改写）
+  // 转发 DSH（Host 改写 + 临时域名横幅注入）
   const headers = Object.assign({}, req.headers, { host: TRUST_HOST });
   const up = http.request({ host: UP_HOST, port: UP_PORT, path: req.url, method: req.method, headers }, (ur) => {
+    const ct = (ur.headers['content-type'] || '').toString();
+    const inject = bannerInject();
+    if (inject && ct.includes('text/html') && req.method === 'GET') {
+      const chunks = [];
+      ur.on('data', c => chunks.push(c));
+      ur.on('end', () => {
+        let body = Buffer.concat(chunks).toString('utf-8');
+        if (body.includes('</head>')) {
+          body = body.replace('</head>', inject + '</head>');
+          const hd = Object.assign({}, ur.headers); delete hd['content-length'];
+          res.writeHead(ur.statusCode, hd);
+          res.end(body);
+        } else {
+          res.writeHead(ur.statusCode, ur.headers);
+          res.end(Buffer.concat(chunks));
+        }
+      });
+      return;
+    }
     res.writeHead(ur.statusCode, ur.headers);
     ur.pipe(res);
   });
